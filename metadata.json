@@ -1,0 +1,9 @@
+{
+  "name": "TeamSync: Small Business Task Manager",
+  "description": "A mobile-first task management solution for small businesses. Manage teams, assign recurring tasks, and track completion with photo verification.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation",
+    "microphone"
+  ]
+}
