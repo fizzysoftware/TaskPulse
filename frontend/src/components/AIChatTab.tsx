@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+import { generateContent } from '../services/aiService';
 import { User, TaskDraft, TaskPriority } from '../types';
 import { Send, Mic, Sparkles, Loader2, UserCircle2, Bot } from 'lucide-react';
 
@@ -16,23 +16,26 @@ interface AIChatTabProps {
   onVoiceCreate: () => void;
 }
 
-const draftTaskTool: FunctionDeclaration = {
-  name: "draftTask",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      title: { type: Type.STRING, description: "The main title of the task" },
-      description: { type: Type.STRING, description: "Detailed description of what needs to be done" },
-      priority: { 
-          type: Type.STRING, 
-          enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
-          description: "Priority level of the task"
+const draftTaskTool = {
+  functionDeclarations: [{
+    name: "draftTask",
+    description: "Create a task draft when the user wants to create a new task",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        title: { type: "STRING", description: "The main title of the task" },
+        description: { type: "STRING", description: "Detailed description of what needs to be done" },
+        priority: { 
+            type: "STRING", 
+            enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
+            description: "Priority level of the task"
+        },
+        dueDate: { type: "STRING", description: "The due date in YYYY-MM-DD format" },
+        dueTime: { type: "STRING", description: "The due time in HH:MM 24-hour format" }
       },
-      dueDate: { type: Type.STRING, description: "The due date in YYYY-MM-DD format" },
-      dueTime: { type: Type.STRING, description: "The due time in HH:MM 24-hour format" }
-    },
-    required: ["title"]
-  }
+      required: ["title"]
+    }
+  }]
 };
 
 const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVoiceCreate }) => {
@@ -40,7 +43,7 @@ const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVo
     {
       id: 'welcome',
       role: 'assistant',
-      text: `Hi ${currentUser.name}! I'm your TeamSync assistant. You can tell me to create a task, or ask for help with one. How can I help you today?`,
+      text: `Hi ${currentUser.name}! I'm your TaskPulse assistant. You can tell me to create a task, or ask for help with one. How can I help you today?`,
       timestamp: Date.now()
     }
   ]);
@@ -70,31 +73,27 @@ const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVo
     setIsTyping(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-      // We use gemini-3-flash-preview for fast conversational responses
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: messages.concat(userMessage).map(m => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.text }]
-        })),
-        config: {
-          tools: [{ functionDeclarations: [draftTaskTool] }],
-          systemInstruction: `You are the TeamSync assistant. Help users create tasks. 
-          Today is ${new Date().toISOString().split('T')[0]}. 
-          If a user mentions a task, try to extract its title, description, priority, and due date.
-          Call the 'draftTask' tool whenever you have enough information to form a task.
-          Be friendly and professional.`,
-        }
-      });
+      // Format messages for API
+      const apiMessages = messages.concat(userMessage).map(m => ({
+        role: m.role === 'assistant' ? 'model' as const : 'user' as const,
+        parts: [{ text: m.text }]
+      }));
 
-      const assistantText = response.text || "I've processed your request.";
-      const toolCalls = response.functionCalls;
+      const systemInstruction = `You are the TaskPulse assistant. Help users create tasks. 
+Today is ${new Date().toISOString().split('T')[0]}. 
+If a user mentions a task, try to extract its title, description, priority, and due date.
+Call the 'draftTask' function whenever you have enough information to form a task.
+Be friendly and professional. Keep responses concise.`;
 
-      if (toolCalls && toolCalls.length > 0) {
-        const call = toolCalls.find(fc => fc.name === 'draftTask');
+      const response = await generateContent(apiMessages, systemInstruction, [draftTaskTool]);
+
+      let assistantText = response.text || "I've processed your request.";
+
+      // Handle function calls
+      if (response.functionCalls && response.functionCalls.length > 0) {
+        const call = response.functionCalls.find(fc => fc.name === 'draftTask');
         if (call) {
-          const args = call.args as any;
+          const args = call.args;
           const draft: TaskDraft = {
             title: args.title,
             description: args.description,
@@ -103,6 +102,10 @@ const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVo
             dueTime: args.dueTime
           };
           onDraftCreated(draft);
+          
+          if (!assistantText || assistantText.trim() === '') {
+            assistantText = `I've created a task draft for "${args.title}". You can review and edit it before saving.`;
+          }
         }
       }
 
@@ -117,7 +120,7 @@ const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVo
     } catch (error) {
       console.error("AI Chat Error:", error);
       setMessages(prev => [...prev, {
-        id: 'error',
+        id: 'error-' + Date.now(),
         role: 'assistant',
         text: "Sorry, I encountered an error. Please try again.",
         timestamp: Date.now()
@@ -181,7 +184,7 @@ const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVo
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="E.g. Assign a task to check stock..."
+            placeholder="E.g. Create a task to check stock..."
             className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary shadow-sm"
           />
           <button 
