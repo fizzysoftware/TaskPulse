@@ -1,10 +1,5 @@
-// AI Service using Emergent Integration Proxy
-const EMERGENT_PROXY_URL = 'https://integrations.emergentagent.com/api/providers/google/v1beta';
-
-// Get API key from environment
-const getApiKey = (): string => {
-  return process.env.API_KEY || process.env.GEMINI_API_KEY || '';
-};
+// AI Service - proxied through backend to avoid CORS issues
+const API_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -19,50 +14,27 @@ interface GenerateContentResponse {
   }>;
 }
 
-// Generate content using Gemini via Emergent proxy
+// Generate content using Gemini via backend proxy
 export const generateContent = async (
   messages: ChatMessage[],
   systemInstruction?: string,
   tools?: any[]
 ): Promise<GenerateContentResponse> => {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    throw new Error('No API key configured');
-  }
-
-  const requestBody: any = {
-    contents: messages,
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 1024,
-    }
-  };
-
-  if (systemInstruction) {
-    requestBody.systemInstruction = {
-      parts: [{ text: systemInstruction }]
-    };
-  }
-
-  if (tools && tools.length > 0) {
-    requestBody.tools = tools;
-  }
-
-  const response = await fetch(
-    `${EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify(requestBody),
-    }
-  );
+  const response = await fetch(`${API_URL}/api/ai/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messages,
+      systemInstruction,
+      tools,
+    }),
+  });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `API error: ${response.status}`);
+    throw new Error(errorData.detail || `API error: ${response.status}`);
   }
 
   const data = await response.json();
@@ -90,38 +62,24 @@ export const generateContent = async (
   return { text, functionCalls: functionCalls.length > 0 ? functionCalls : undefined };
 };
 
-// Simple text generation without tools
-export const generateSimpleText = async (prompt: string): Promise<string> => {
-  const result = await generateContent([
-    { role: 'user', parts: [{ text: prompt }] }
-  ]);
-  return result.text;
-};
-
 // Expand task description using AI
 export const expandTaskDescription = async (
   shortTitle: string
 ): Promise<{ description: string; checklist: string[] } | null> => {
   try {
-    const prompt = `Create a detailed task description and a checklist of 3-5 subtasks for a small business task titled: "${shortTitle}". 
-    Keep it professional and concise.
-    
-    Return your response in this exact JSON format:
-    {
-      "description": "A clear, actionable description of the task",
-      "checklist": ["Step 1", "Step 2", "Step 3"]
-    }`;
+    const response = await fetch(`${API_URL}/api/ai/expand-task`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ title: shortTitle }),
+    });
 
-    const result = await generateContent([
-      { role: 'user', parts: [{ text: prompt }] }
-    ]);
-
-    // Parse JSON from response
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+    if (!response.ok) {
+      return null;
     }
-    return null;
+
+    return await response.json();
   } catch (error) {
     console.error('Task expansion failed:', error);
     return null;
@@ -131,21 +89,20 @@ export const expandTaskDescription = async (
 // Analyze team productivity
 export const analyzeTeamProductivity = async (tasks: any[]): Promise<string> => {
   try {
-    const taskSummary = tasks.map(t => ({
-      title: t.title,
-      status: t.status,
-      priority: t.priority
-    }));
+    const response = await fetch(`${API_URL}/api/ai/analyze-productivity`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tasks }),
+    });
 
-    const prompt = `Analyze this list of tasks and provide a 2-sentence motivational summary for the manager about the team's current workload and progress. Keep it positive and actionable.
-    
-    Tasks: ${JSON.stringify(taskSummary)}`;
+    if (!response.ok) {
+      return 'Unable to generate analysis.';
+    }
 
-    const result = await generateContent([
-      { role: 'user', parts: [{ text: prompt }] }
-    ]);
-
-    return result.text || 'Keep up the good work!';
+    const data = await response.json();
+    return data.summary || 'Keep up the good work!';
   } catch (error) {
     console.error('Productivity analysis failed:', error);
     return 'Unable to generate analysis.';
@@ -154,7 +111,6 @@ export const analyzeTeamProductivity = async (tasks: any[]): Promise<string> => 
 
 export default {
   generateContent,
-  generateSimpleText,
   expandTaskDescription,
   analyzeTeamProductivity,
 };
