@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Task, TaskStatus } from '../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, Tooltip } from 'recharts';
-import { analyzeTeamProductivity } from '../services/geminiService';
+import { analyzeTeamProductivity } from '../services/aiService';
 import { Lightbulb } from 'lucide-react';
 
 interface DashboardProps {
