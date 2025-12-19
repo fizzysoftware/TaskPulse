@@ -16,26 +16,62 @@ interface AIChatTabProps {
   onVoiceCreate: () => void;
 }
 
-const draftTaskTool = {
-  functionDeclarations: [{
-    name: "draftTask",
-    description: "Create a task draft when the user wants to create a new task",
-    parameters: {
-      type: "OBJECT",
-      properties: {
-        title: { type: "STRING", description: "The main title of the task" },
-        description: { type: "STRING", description: "Detailed description of what needs to be done" },
-        priority: { 
-            type: "STRING", 
-            enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
-            description: "Priority level of the task"
-        },
-        dueDate: { type: "STRING", description: "The due date in YYYY-MM-DD format" },
-        dueTime: { type: "STRING", description: "The due time in HH:MM 24-hour format" }
-      },
-      required: ["title"]
+// Parse task details from AI response text
+const parseTaskFromResponse = (text: string): TaskDraft | null => {
+  try {
+    // Try to find tool_code pattern
+    const toolMatch = text.match(/tool_code\s*draftTask\s*\(\s*([^)]+)\s*\)/i);
+    if (toolMatch) {
+      const argsStr = toolMatch[1];
+      const args: Record<string, string> = {};
+      
+      // Parse key='value' or key="value" patterns
+      const keyValueRegex = /(\w+)\s*=\s*['"]([^'"]*)['"]/g;
+      let match;
+      while ((match = keyValueRegex.exec(argsStr)) !== null) {
+        args[match[1]] = match[2];
+      }
+      
+      if (args.title) {
+        return {
+          title: args.title,
+          description: args.description || '',
+          priority: (args.priority?.toUpperCase() || 'MEDIUM') as TaskPriority,
+          dueDate: args.dueDate?.split('T')[0] || new Date().toISOString().split('T')[0],
+          dueTime: args.dueDate?.includes('T') ? args.dueDate.split('T')[1]?.substring(0, 5) : '09:00'
+        };
+      }
     }
-  }]
+    
+    // Try to find JSON pattern
+    const jsonMatch = text.match(/\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.title) {
+        return {
+          title: parsed.title,
+          description: parsed.description || '',
+          priority: (parsed.priority?.toUpperCase() || 'MEDIUM') as TaskPriority,
+          dueDate: parsed.dueDate?.split('T')[0] || new Date().toISOString().split('T')[0],
+          dueTime: parsed.dueTime || '09:00'
+        };
+      }
+    }
+  } catch (e) {
+    console.error('Error parsing task from response:', e);
+  }
+  return null;
+};
+
+// Clean up the response text by removing tool_code blocks
+const cleanResponseText = (text: string): string => {
+  // Remove markdown code blocks containing tool_code
+  let cleaned = text.replace(/```[^`]*tool_code[^`]*```/gi, '');
+  // Remove inline tool_code patterns
+  cleaned = cleaned.replace(/`*tool_code\s*draftTask\s*\([^)]*\)\s*`*/gi, '');
+  // Clean up extra whitespace
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  return cleaned;
 };
 
 const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVoiceCreate }) => {
@@ -79,33 +115,29 @@ const AIChatTab: React.FC<AIChatTabProps> = ({ currentUser, onDraftCreated, onVo
         parts: [{ text: m.text }]
       }));
 
+      const today = new Date().toISOString().split('T')[0];
       const systemInstruction = `You are the TaskPulse assistant. Help users create tasks. 
-Today is ${new Date().toISOString().split('T')[0]}. 
-If a user mentions a task, try to extract its title, description, priority, and due date.
-Call the 'draftTask' function whenever you have enough information to form a task.
-Be friendly and professional. Keep responses concise.`;
+Today's date is ${today}. 
+When a user wants to create a task, extract the details and respond with:
+1. A confirmation message about what you understood
+2. Include this exact format in your response: tool_code draftTask( title='Task Title', description='Description', dueDate='YYYY-MM-DDTHH:MM:SS', priority='medium' )
 
-      const response = await generateContent(apiMessages, systemInstruction, [draftTaskTool]);
+Priority can be: low, medium, high, or urgent.
+For "tomorrow", use the next day's date.
+Be friendly and helpful. Keep responses concise.`;
+
+      const response = await generateContent(apiMessages, systemInstruction);
 
       let assistantText = response.text || "I've processed your request.";
 
-      // Handle function calls
-      if (response.functionCalls && response.functionCalls.length > 0) {
-        const call = response.functionCalls.find(fc => fc.name === 'draftTask');
-        if (call) {
-          const args = call.args;
-          const draft: TaskDraft = {
-            title: args.title,
-            description: args.description,
-            priority: args.priority as TaskPriority,
-            dueDate: args.dueDate,
-            dueTime: args.dueTime
-          };
-          onDraftCreated(draft);
-          
-          if (!assistantText || assistantText.trim() === '') {
-            assistantText = `I've created a task draft for "${args.title}". You can review and edit it before saving.`;
-          }
+      // Try to parse task from response
+      const taskDraft = parseTaskFromResponse(assistantText);
+      if (taskDraft) {
+        onDraftCreated(taskDraft);
+        // Clean up the response text
+        assistantText = cleanResponseText(assistantText);
+        if (!assistantText) {
+          assistantText = `I've created a task draft for "${taskDraft.title}". You can review and edit it before saving.`;
         }
       }
 
