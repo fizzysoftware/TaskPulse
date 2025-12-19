@@ -614,8 +614,9 @@ async def toggle_invite_enabled(enabled: bool):
 
 # ============== AI ENDPOINTS ==============
 
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-EMERGENT_PROXY_URL = "https://integrations.emergentagent.com/api/providers/google/v1beta"
 
 class AIRequest(BaseModel):
     messages: List[dict]
@@ -630,55 +631,71 @@ class ProductivityAnalysisRequest(BaseModel):
 
 @app.post("/api/ai/chat")
 async def ai_chat(request: AIRequest):
-    """Proxy AI chat request to Emergent integration"""
+    """AI chat endpoint using Emergent integration"""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(status_code=500, detail="AI service not configured")
     
-    request_body = {
-        "contents": request.messages,
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 1024,
+    try:
+        # Convert messages to our format
+        system_message = request.systemInstruction or "You are a helpful assistant."
+        
+        # Create initial messages list
+        initial_messages = [{"role": "system", "content": system_message}]
+        
+        # Add conversation history (except the last user message)
+        for msg in request.messages[:-1]:
+            role = "assistant" if msg.get("role") == "model" else "user"
+            content = ""
+            parts = msg.get("parts", [])
+            for part in parts:
+                if isinstance(part, dict) and "text" in part:
+                    content += part["text"]
+            if content:
+                initial_messages.append({"role": role, "content": content})
+        
+        # Create LlmChat instance
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=str(uuid.uuid4()),
+            system_message=system_message,
+            initial_messages=initial_messages
+        ).with_model("gemini", "gemini-2.0-flash")
+        
+        # Get the last user message
+        last_msg = request.messages[-1] if request.messages else None
+        if not last_msg:
+            raise HTTPException(status_code=400, detail="No messages provided")
+        
+        user_text = ""
+        parts = last_msg.get("parts", [])
+        for part in parts:
+            if isinstance(part, dict) and "text" in part:
+                user_text += part["text"]
+        
+        # Send message
+        response_text = await chat.send_message(UserMessage(text=user_text))
+        
+        # Return in Gemini-like format for frontend compatibility
+        return {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": response_text}],
+                    "role": "model"
+                }
+            }]
         }
-    }
-    
-    if request.systemInstruction:
-        request_body["systemInstruction"] = {
-            "parts": [{"text": request.systemInstruction}]
-        }
-    
-    if request.tools:
-        request_body["tools"] = request.tools
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                f"{EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": EMERGENT_LLM_KEY,
-                },
-                json=request_body,
-                timeout=30.0
-            )
-            
-            if response.status_code != 200:
-                error_data = response.json()
-                raise HTTPException(status_code=response.status_code, detail=error_data.get("error", {}).get("message", "AI API error"))
-            
-            return response.json()
-        except httpx.TimeoutException:
-            raise HTTPException(status_code=504, detail="AI service timeout")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        print(f"AI Chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/ai/expand-task")
 async def expand_task(request: TaskExpansionRequest):
     """Expand a task title into description and checklist"""
     if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=500, detail="AI service not configured")
+        return {"description": "", "checklist": []}
     
-    prompt = f"""Create a detailed task description and a checklist of 3-5 subtasks for a small business task titled: "{request.title}". 
+    try:
+        prompt = f"""Create a detailed task description and a checklist of 3-5 subtasks for a small business task titled: "{request.title}". 
 Keep it professional and concise.
 
 Return your response in this exact JSON format:
@@ -687,40 +704,22 @@ Return your response in this exact JSON format:
   "checklist": ["Step 1", "Step 2", "Step 3"]
 }}"""
 
-    request_body = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 512,
-        }
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                f"{EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": EMERGENT_LLM_KEY,
-                },
-                json=request_body,
-                timeout=30.0
-            )
-            
-            if response.status_code != 200:
-                return {"description": "", "checklist": []}
-            
-            data = response.json()
-            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            
-            # Parse JSON from response
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                return json.loads(json_match.group(0))
-            return {"description": "", "checklist": []}
-        except Exception as e:
-            print(f"Task expansion error: {e}")
-            return {"description": "", "checklist": []}
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=str(uuid.uuid4()),
+            system_message="You are a helpful task assistant."
+        ).with_model("gemini", "gemini-2.0-flash")
+        
+        response = await chat.send_message(UserMessage(text=prompt))
+        
+        # Parse JSON from response
+        json_match = re.search(r'\{[\s\S]*\}', response)
+        if json_match:
+            return json.loads(json_match.group(0))
+        return {"description": "", "checklist": []}
+    except Exception as e:
+        print(f"Task expansion error: {e}")
+        return {"description": "", "checklist": []}
 
 @app.post("/api/ai/analyze-productivity")
 async def analyze_productivity(request: ProductivityAnalysisRequest):
@@ -728,41 +727,24 @@ async def analyze_productivity(request: ProductivityAnalysisRequest):
     if not EMERGENT_LLM_KEY:
         return {"summary": "AI analysis requires configuration."}
     
-    task_summary = [{"title": t.get("title"), "status": t.get("status"), "priority": t.get("priority")} for t in request.tasks]
-    
-    prompt = f"""Analyze this list of tasks and provide a 2-sentence motivational summary for the manager about the team's current workload and progress. Keep it positive and actionable.
+    try:
+        task_summary = [{"title": t.get("title"), "status": t.get("status"), "priority": t.get("priority")} for t in request.tasks]
+        
+        prompt = f"""Analyze this list of tasks and provide a 2-sentence motivational summary for the manager about the team's current workload and progress. Keep it positive and actionable.
 
 Tasks: {task_summary}"""
 
-    request_body = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 256,
-        }
-    }
-    
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                f"{EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": EMERGENT_LLM_KEY,
-                },
-                json=request_body,
-                timeout=30.0
-            )
-            
-            if response.status_code != 200:
-                return {"summary": "Unable to generate analysis."}
-            
-            data = response.json()
-            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            return {"summary": text or "Keep up the good work!"}
-        except Exception as e:
-            print(f"Productivity analysis error: {e}")
-            return {"summary": "Unable to generate analysis."}
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=str(uuid.uuid4()),
+            system_message="You are a productivity analyst."
+        ).with_model("gemini", "gemini-2.0-flash")
+        
+        response = await chat.send_message(UserMessage(text=prompt))
+        return {"summary": response or "Keep up the good work!"}
+    except Exception as e:
+        print(f"Productivity analysis error: {e}")
+        return {"summary": "Unable to generate analysis."}
 
 # ============== HEALTH CHECK ==============
 
