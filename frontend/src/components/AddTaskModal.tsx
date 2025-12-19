@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, TaskPriority, Recurrence, TaskStatus, TaskDraft } from '../types';
-import { expandTaskDescription } from '../services/geminiService';
+import { expandTaskDescription } from '../services/aiService';
 import { Sparkles, X, Loader2, Plus, Trash2, MapPin, Camera, Clock, Calendar, Flag, Repeat } from 'lucide-react';
 
 interface AddTaskModalProps {
