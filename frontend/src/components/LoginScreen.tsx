@@ -91,8 +91,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ users, onLogin, onJoinTeam, c
         <div className="w-16 h-16 bg-primary rounded-2xl mx-auto flex items-center justify-center mb-4 shadow-lg shadow-primary/20 rotate-3">
            <UserCircle2 size={40} className="text-white" />
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">TeamSync</h1>
-        <p className="text-gray-500 mt-1 text-sm font-medium">Small Business Task Management</p>
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">TaskPulse</h1>
+        <p className="text-gray-500 mt-1 text-sm font-medium">Mobile Task Management</p>
       </div>
 
       <div className="w-full bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden p-6 mb-6">
