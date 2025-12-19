@@ -70,21 +70,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ users, onLogin, onJoinTeam, c
       }, 500);
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
       e.preventDefault();
       setError('');
-
-      if (code.toUpperCase() !== companyCode.toUpperCase()) {
-          setError('Invalid Company Code');
-          return;
-      }
-
       setIsLoading(true);
-      setTimeout(() => {
-          onJoinTeam(name, phoneNumber);
-          setIsLoading(false);
+
+      try {
+          await onJoinTeam(name, phoneNumber, code);
           setStep('PENDING');
-      }, 1000);
+      } catch (err: any) {
+          setError(err.message || 'Failed to join team');
+      } finally {
+          setIsLoading(false);
+      }
   };
 
   return (
