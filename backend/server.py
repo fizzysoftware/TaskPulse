@@ -614,8 +614,6 @@ async def toggle_invite_enabled(enabled: bool):
 
 # ============== AI ENDPOINTS ==============
 
-import httpx
-
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 EMERGENT_PROXY_URL = "https://integrations.emergentagent.com/api/providers/google/v1beta"
 
