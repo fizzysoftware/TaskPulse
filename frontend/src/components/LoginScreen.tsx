@@ -5,7 +5,7 @@ import { UserCircle2, ArrowRight, Loader2, Smartphone, ShieldCheck, Lock, Chevro
 interface LoginScreenProps {
   users: User[];
   onLogin: (user: User) => void;
-  onJoinTeam: (name: string, phone: string) => void;
+  onJoinTeam: (name: string, phone: string, code: string) => Promise<User>;
   companyCode: string;
 }
 
