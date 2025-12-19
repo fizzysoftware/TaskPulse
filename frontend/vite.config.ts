@@ -7,7 +7,8 @@ export default defineConfig(({ mode }) => {
     return {
       server: {
         port: 3000,
-        host: true,
+        host: '0.0.0.0',
+        allowedHosts: ['.emergentagent.com', 'localhost'],
       },
       plugins: [react()],
       define: {
