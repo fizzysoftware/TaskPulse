@@ -714,8 +714,6 @@ Return your response in this exact JSON format:
             text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
             
             # Parse JSON from response
-            import json
-            import re
             json_match = re.search(r'\{[\s\S]*\}', text)
             if json_match:
                 return json.loads(json_match.group(0))
