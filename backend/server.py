@@ -609,6 +609,162 @@ async def toggle_invite_enabled(enabled: bool):
     )
     return {"isInviteEnabled": enabled}
 
+# ============== AI ENDPOINTS ==============
+
+import httpx
+
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+EMERGENT_PROXY_URL = "https://integrations.emergentagent.com/api/providers/google/v1beta"
+
+class AIRequest(BaseModel):
+    messages: List[dict]
+    systemInstruction: Optional[str] = None
+    tools: Optional[List[dict]] = None
+
+class TaskExpansionRequest(BaseModel):
+    title: str
+
+class ProductivityAnalysisRequest(BaseModel):
+    tasks: List[dict]
+
+@app.post("/api/ai/chat")
+async def ai_chat(request: AIRequest):
+    """Proxy AI chat request to Emergent integration"""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI service not configured")
+    
+    request_body = {
+        "contents": request.messages,
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 1024,
+        }
+    }
+    
+    if request.systemInstruction:
+        request_body["systemInstruction"] = {
+            "parts": [{"text": request.systemInstruction}]
+        }
+    
+    if request.tools:
+        request_body["tools"] = request.tools
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": EMERGENT_LLM_KEY,
+                },
+                json=request_body,
+                timeout=30.0
+            )
+            
+            if response.status_code != 200:
+                error_data = response.json()
+                raise HTTPException(status_code=response.status_code, detail=error_data.get("error", {}).get("message", "AI API error"))
+            
+            return response.json()
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail="AI service timeout")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ai/expand-task")
+async def expand_task(request: TaskExpansionRequest):
+    """Expand a task title into description and checklist"""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=500, detail="AI service not configured")
+    
+    prompt = f"""Create a detailed task description and a checklist of 3-5 subtasks for a small business task titled: "{request.title}". 
+Keep it professional and concise.
+
+Return your response in this exact JSON format:
+{{
+  "description": "A clear, actionable description of the task",
+  "checklist": ["Step 1", "Step 2", "Step 3"]
+}}"""
+
+    request_body = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 512,
+        }
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": EMERGENT_LLM_KEY,
+                },
+                json=request_body,
+                timeout=30.0
+            )
+            
+            if response.status_code != 200:
+                return {"description": "", "checklist": []}
+            
+            data = response.json()
+            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            
+            # Parse JSON from response
+            import json
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                return json.loads(json_match.group(0))
+            return {"description": "", "checklist": []}
+        except Exception as e:
+            print(f"Task expansion error: {e}")
+            return {"description": "", "checklist": []}
+
+@app.post("/api/ai/analyze-productivity")
+async def analyze_productivity(request: ProductivityAnalysisRequest):
+    """Analyze team productivity from tasks"""
+    if not EMERGENT_LLM_KEY:
+        return {"summary": "AI analysis requires configuration."}
+    
+    task_summary = [{"title": t.get("title"), "status": t.get("status"), "priority": t.get("priority")} for t in request.tasks]
+    
+    prompt = f"""Analyze this list of tasks and provide a 2-sentence motivational summary for the manager about the team's current workload and progress. Keep it positive and actionable.
+
+Tasks: {task_summary}"""
+
+    request_body = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 256,
+        }
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{EMERGENT_PROXY_URL}/models/gemini-2.0-flash:generateContent",
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": EMERGENT_LLM_KEY,
+                },
+                json=request_body,
+                timeout=30.0
+            )
+            
+            if response.status_code != 200:
+                return {"summary": "Unable to generate analysis."}
+            
+            data = response.json()
+            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            return {"summary": text or "Keep up the good work!"}
+        except Exception as e:
+            print(f"Productivity analysis error: {e}")
+            return {"summary": "Unable to generate analysis."}
+
 # ============== HEALTH CHECK ==============
 
 @app.get("/api/health")
