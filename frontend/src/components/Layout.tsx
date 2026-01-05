@@ -199,16 +199,6 @@ const Layout: React.FC<LayoutProps> = ({
             <MessageSquare size={20} />
             <span className="text-[10px] font-medium">AI Chat</span>
           </button>
-
-          {isManagement && (
-            <button
-              onClick={() => setCurrentTab('team')}
-              className={`flex flex-col items-center justify-center w-full h-full space-y-1 ${currentTab === 'team' ? 'text-primary' : 'text-gray-400'}`}
-            >
-              <Users size={20} />
-              <span className="text-[10px] font-medium">Team</span>
-            </button>
-          )}
         </div>
       </nav>
     </div>
