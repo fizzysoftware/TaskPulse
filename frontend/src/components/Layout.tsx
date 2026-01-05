@@ -96,6 +96,18 @@ const Layout: React.FC<LayoutProps> = ({
                 {isManagement && (
                   <button
                     onClick={() => {
+                      setCurrentTab('team');
+                      setIsMenuOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors ${currentTab === 'team' ? 'text-primary bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    <Users size={18} />
+                    <span className="font-medium">Team</span>
+                  </button>
+                )}
+                {isManagement && (
+                  <button
+                    onClick={() => {
                       setCurrentTab('dashboard');
                       setIsMenuOpen(false);
                     }}
